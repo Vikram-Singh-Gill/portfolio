@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Fluffy CTF writeup by Vikram Singh." />
+  <title>Fluffy | CTF Writeup</title>
+  <link rel="stylesheet" href="../../assets/css/styles.css" />
+</head>
+<body>
+  <canvas id="matrixCanvas" aria-hidden="true"></canvas>
+  <div class="noise" aria-hidden="true"></div>
+  <div class="orb one" aria-hidden="true"></div>
+  <div class="orb two" aria-hidden="true"></div>
+
+  <header class="site-header">
+    <nav class="nav-shell" aria-label="Primary navigation">
+      <button class="mobile-toggle" id="mobileToggle" type="button" aria-label="Toggle navigation">menu</button>
+      <div class="nav-links" id="navLinks">
+        <a class="nav-link" href="../../index.html#about">About</a>
+        <a class="nav-link active" href="../../index.html#writeups">CTF Writeups</a>
+        <a class="nav-link external-link" href="https://github.com/your-github-username" target="_blank" rel="noopener">GitHub</a>
+        <a class="nav-link external-link" href="https://www.linkedin.com/in/your-linkedin-username" target="_blank" rel="noopener">LinkedIn</a>
+        <a class="nav-link external-link" href="https://app.hackthebox.com/profile/your-htb-id" target="_blank" rel="noopener">HTB Profile</a>
+      </div>
+    </nav>
+  </header>
+
+  <main>
+    <section class="container writeup-layout">
+      <article class="article">
+        <div class="eyebrow"><span class="status-dot"></span> CTF writeup</div>
+        <h1>Fluffy — CTF Writeup</h1>
+        <p>Use this page to write your Fluffy walkthrough. Replace the placeholder text with your own notes, screenshots, commands, and lessons learned.</p>
+
+        <h2 id="info">Machine / Target Info</h2>
+        <table class="info-table">
+          <tr><th>Machine</th><td>Fluffy</td></tr>
+          <tr><th>Difficulty</th><td>Easy</td></tr>
+          <tr><th>Platform</th><td>CTF / Authorized Lab</td></tr>
+          <tr><th>Focus</th><td>Enumeration, exploitation, privilege escalation, reporting</td></tr>
+        </table>
+
+        <h2 id="summary">Summary</h2>
+        <p>Write a short overview of the attack path, including initial discovery, foothold, privilege escalation, and the main lesson from the machine.</p>
+
+        <h2 id="enumeration">Enumeration</h2>
+        <p>Add your enumeration findings here.</p>
+        <pre><code>nmap -sC -sV -oA scans/fluffy 10.10.10.10</code></pre>
+
+        <h3>Screenshot Placeholder</h3>
+        <div class="placeholder-image">Add screenshots to: images/</div>
+        <!-- Example:
+        <img src="images/nmap.png" alt="Fluffy Nmap scan results">
+        -->
+
+        <h2 id="exploitation">Exploitation</h2>
+        <p>Add the vulnerability, reasoning, and exploitation steps here.</p>
+
+        <h2 id="privilege-escalation">Privilege Escalation</h2>
+        <p>Add the privilege escalation path here.</p>
+
+        <h2 id="notes">Notes</h2>
+        <p>Add useful notes, rabbit holes, screenshots, and reminders here.</p>
+
+        <h2 id="commands">Commands Used</h2>
+        <pre><code># Add Fluffy commands here</code></pre>
+
+        <h2 id="lessons">Lessons Learned</h2>
+        <p>Add your key takeaways here.</p>
+      </article>
+
+      <aside class="toc" aria-label="Table of contents">
+        <h3>Fluffy</h3>
+        <a href="../../index.html#writeups">Back to CTF Writeups</a>
+        <a href="#info">Machine / Target Info</a>
+        <a href="#summary">Summary</a>
+        <a href="#enumeration">Enumeration</a>
+        <a href="#exploitation">Exploitation</a>
+        <a href="#privilege-escalation">Privilege Escalation</a>
+        <a href="#commands">Commands Used</a>
+        <a href="#lessons">Lessons Learned</a>
+      </aside>
+    </section>
+  </main>
+
+  <footer>
+    <span>© <span id="year"></span> Vikram Singh</span>
+    <span>clean reports / real attack paths / measurable risk</span>
+  </footer>
+
+  <script src="../../assets/js/writeup.js"></script>
+</body>
+</html>

@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Vikram Singh — aspiring penetration tester focused on infrastructure security, Active Directory, hybrid identity, cloud misconfigurations, and technical reporting." />
+  <title>Vikram Singh | Penetration Testing Portfolio</title>
+  <link rel="stylesheet" href="assets/css/styles.css" />
+</head>
+<body>
+  <canvas id="matrixCanvas" aria-hidden="true"></canvas>
+  <div class="noise" aria-hidden="true"></div>
+  <div class="orb one" aria-hidden="true"></div>
+  <div class="orb two" aria-hidden="true"></div>
+
+  <header class="site-header">
+    <nav class="nav-shell" aria-label="Primary navigation">
+      <button class="mobile-toggle" id="mobileToggle" type="button" aria-label="Toggle navigation">menu</button>
+      <div class="nav-links" id="navLinks">
+        <a class="nav-link" data-route="about" href="#about">About</a>
+        <a class="nav-link" data-route="writeups" href="#writeups">CTF Writeups</a>
+        <a class="nav-link external-link" href="https://github.com/your-github-username" target="_blank" rel="noopener">GitHub</a>
+        <a class="nav-link external-link" href="https://www.linkedin.com/in/your-linkedin-username" target="_blank" rel="noopener">LinkedIn</a>
+        <a class="nav-link external-link" href="https://app.hackthebox.com/profile/your-htb-id" target="_blank" rel="noopener">HTB Profile</a>
+      </div>
+    </nav>
+  </header>
+
+  <main>
+    <section id="about" class="page active" data-page="about">
+      <div class="container hero about-hero">
+        <aside class="profile-card round-profile" aria-label="Profile picture">
+          <div class="profile-frame">
+            <div class="profile-fallback">VS</div>
+            <img src="assets/profile.jpg" alt="Vikram Singh profile picture" onerror="this.style.display='none'" />
+          </div>
+        </aside>
+
+        <div>
+          <h1>Vikram <span class="mono-accent">Singh</span></h1>
+          <p class="about-copy">I spend a lot of time thinking about the security of systems in offensive ways. I use this site to share thoughts that might aid others who are working on similar problems.</p>
+        </div>
+      </div>
+
+      <div class="container certifications-section">
+        <article class="card cert-card">
+          <div class="panel-title">Certifications</div>
+          <div class="cert-grid">
+            <a class="cert-link" href="https://certifications.tcm-sec.com/pnpt/" target="_blank" rel="noopener">
+              <div class="cert-logo">
+                <img src="assets/certs/pnpt.png" alt="PNPT logo" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';" />
+                <span style="display: none;">PNPT</span>
+              </div>
+              <strong>PNPT</strong>
+              <span>TCM Security</span>
+            </a>
+            <a class="cert-link" href="https://www.coursera.org/professional-certificates/google-cybersecurity" target="_blank" rel="noopener">
+              <div class="cert-logo">
+                <img src="assets/certs/google-cybersecurity.png" alt="Google Cybersecurity Certificate logo" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';" />
+                <span style="display: none;">G</span>
+              </div>
+              <strong>Google Cybersecurity Certificate</strong>
+              <span>Google / Coursera</span>
+            </a>
+            <a class="cert-link" href="https://academy.hackthebox.com/preview/certifications/htb-certified-penetration-testing-specialist" target="_blank" rel="noopener">
+              <div class="cert-logo">
+                <img src="assets/certs/cpts.png" alt="CPTS logo" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';" />
+                <span style="display: none;">CPTS</span>
+              </div>
+              <strong>CPTS</strong>
+              <span>In progress</span>
+            </a>
+            <a class="cert-link" href="https://www.offsec.com/courses/pen-200/" target="_blank" rel="noopener">
+              <div class="cert-logo">
+                <img src="assets/certs/oscp.png" alt="OSCP logo" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';" />
+                <span style="display: none;">OSCP</span>
+              </div>
+              <strong>OSCP</strong>
+              <span>Planned</span>
+            </a>
+          </div>
+        </article>
+
+        <article class="card skills-card" style="margin-top: 20px;">
+          <div class="panel-title">Skills</div>
+          <ul class="skills-list">
+            <li>Infrastructure penetration testing</li>
+            <li>External enumeration</li>
+            <li>Web exploitation</li>
+            <li>Windows privilege escalation</li>
+            <li>Linux privilege escalation</li>
+            <li>Active Directory security</li>
+            <li>Entra ID and hybrid identity</li>
+            <li>Kerberos and LDAP enumeration</li>
+            <li>Cloud security fundamentals</li>
+            <li>Kubernetes basics</li>
+            <li>Nmap, Burp Suite, and BloodHound</li>
+            <li>Python, Bash, and technical reporting</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section id="writeups" class="page" data-page="writeups">
+      <div class="container">
+        <div class="section-heading">
+          <div>
+            <div class="section-kicker">./ctf-writeups --retired-authorized</div>
+            <h2 class="section-title">CTF writeups.</h2>
+          </div>
+          <p class="section-copy">Blog-style notes for retired or authorized CTF machines. Each writeup focuses on methodology, key decisions, commands, and lessons learned.</p>
+        </div>
+        <div class="grid three" id="writeupsGrid"></div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <span>© <span id="year"></span> Vikram Singh</span>
+    <span>clean reports / real attack paths / measurable risk</span>
+  </footer>
+
+  <script src="assets/js/main.js"></script>
+</body>
+</html>
