@@ -1,15 +1,15 @@
 const writeups = [
   {
-    name: "Fluffy",
+    name: "HTB Fluffy",
     difficulty: "Easy",
-    summary: "An Easy CTF machine writeup focused on enumeration, foothold development, privilege escalation, and practical lessons learned.",
-    href: "writeups/fluffy/index.html"
+    logo: "writeups/fluffy/fluffy.png",
+    href: "writeups/fluffy/htb-fluffy.html"
   },
   {
-    name: "Trick",
+    name: "HTB Trick",
     difficulty: "Easy",
-    summary: "An Easy CTF machine writeup focused on clear methodology, useful commands, exploitation notes, and privilege escalation takeaways.",
-    href: "writeups/trick/index.html"
+    logo: "writeups/trick/trick.png",
+    href: "writeups/trick/htb-trick.html"
   }
 ];
 
@@ -22,17 +22,21 @@ function renderWriteups() {
   if (!grid) return;
 
   grid.innerHTML = writeups.map(function (writeup) {
-    return [
-      '<article class="card">',
-      '<div class="rank ' + difficultyClassName(writeup.difficulty) + '">' + writeup.difficulty + '</div>',
-      '<h3>' + writeup.name + '</h3>',
-      '<p>' + writeup.summary + '</p>',
-      '<div class="hero-actions" style="margin-top: 22px;">',
-      '<a class="btn" href="' + writeup.href + '">Read Writeup</a>',
-      '</div>',
-      '</article>'
-    ].join("");
-  }).join("");
+  return [
+    '<article class="card">',
+    '<div class="rank ' + difficultyClassName(writeup.difficulty) + '">' + writeup.difficulty + '</div>',
+
+    '<div style="display: flex; align-items: center; gap: 50px;">',
+    '<h3 style="margin: 0;">' + writeup.name + '</h3>',
+    '<img src="' + writeup.logo + '" alt="' + writeup.name + ' logo" style="width: 110px; height: 110px; object-fit: contain;"/>',
+    '</div>',
+
+    '<div class="hero-actions" style="margin-top: 20px;">',
+    '<a class="btn" href="' + writeup.href + '">Read Writeup</a>',
+    '</div>',
+    '</article>'
+  ].join("");
+}).join("");
 }
 
 function setupHashRouting() {

@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Fluffy CTF writeup by Vikram Singh." />
+  <title>Fluffy | CTF Writeup</title>
+  <link rel="stylesheet" href="../../assets/css/styles.css" />
+</head>
+<body>
+  <canvas id="matrixCanvas" aria-hidden="true"></canvas>
+  <div class="noise" aria-hidden="true"></div>
+  <div class="orb one" aria-hidden="true"></div>
+  <div class="orb two" aria-hidden="true"></div>
+
+  <header class="site-header">
+    <nav class="nav-shell" aria-label="Primary navigation">
+      <button class="mobile-toggle" id="mobileToggle" type="button" aria-label="Toggle navigation">menu</button>
+      <div class="nav-links" id="navLinks">
+        <a class="nav-link" href="../../index.html#about">About</a>
+        <a class="nav-link active" href="../../index.html#writeups">CTF Writeups</a>
+        <a class="nav-link external-link" href="https://github.com/Vikram-Singh-Gill" target="_blank" rel="noopener">GitHub</a>
+        <a class="nav-link external-link" href="https://linkedin.com/in/vikram-singh-gill/" target="_blank" rel="noopener">LinkedIn</a>
+        <a class="nav-link external-link" href="https://profile.hackthebox.com/profile/019db6a4-2dd8-7208-b304-27d9979fbb0a" target="_blank" rel="noopener">HTB Profile</a>
+      </div>
+    </nav>
+  </header>
+
+  <main>
+    <section class="container writeup-layout">
+      <article class="article">
+        <div class="eyebrow"><span class="status-dot"></span> CTF writeup</div>
+        <h1>HTB Fluffy</h1>
+    
+        <h2 id="info">Machine / Target Info</h2>
+        <table class="info-table">
+          <tr><th>Machine</th><td>Fluffy</td></tr>
+          <tr><th>Difficulty</th><td>Easy</td></tr>
+          <tr><th>OS</th><td>Windows</td></tr>
+          <tr><th>Focus</th><td>Enumeration, exploitation, privilege escalation, reporting</td></tr>
+        </table>
+
+        <h2 id="summary">Summary</h2>
+        <p>Fluffy is an easy-difficulty Windows machine designed around an assumed breach scenario, where credentials for a low-privileged user <code>j.fleischman / J0elTHEM4n1990!</code> are provided. By exploiting CVE-2025-24071, the credentials of another low-privileged user can be obtained. Further enumeration reveals the existence of ACLs over the winrm_svc and ca_svc accounts. WinRM can then be used to log in to the target using the winrc_svc account. Exploitation of an Active Directory Certificate service (ESC16) using the ca_svc account is required to obtain access to the Administrator account.</p>
+
+        <h2 id="enumeration">Enumeration</h2>
+<p>
+  I started with a full TCP port scan using Nmap to identify exposed services on the target.
+</p>
+
+<pre><code>$ nmap -sC -sV -p- 10.129.232.88</code>
+
+Starting Nmap 7.98 ( https://nmap.org ) at 2026-05-25 18:41 -0400
+Stats: 0:00:59 elapsed; 0 hosts completed (1 up), 1 undergoing Script Scan
+NSE Timing: About 98.38% done; ETC: 18:42 (0:00:00 remaining)
+Nmap scan report for 10.129.232.88
+Host is up (0.034s latency).
+
+PORT      STATE SERVICE       VERSION
+53/tcp    open  domain        Simple DNS Plus
+88/tcp    open  kerberos-sec  Microsoft Windows Kerberos (server time: 2026-05-26 05:41:37Z)
+139/tcp   open  netbios-ssn   Microsoft Windows netbios-ssn
+389/tcp   open  ldap          Microsoft Windows Active Directory LDAP (Domain: fluffy.htb, Site: Default-First-Site-Name)
+| ssl-cert: Subject:
+| Subject Alternative Name: DNS:DC01.fluffy.htb, DNS:fluffy.htb, DNS:FLUFFY
+| Not valid before: 2026-04-30T16:09:59
+|_Not valid after:  2106-04-30T16:09:59
+|_ssl-date: 2026-05-26T05:43:07+00:00; +7h00m01s from scanner time.
+445/tcp   open  microsoft-ds?
+464/tcp   open  kpasswd5?
+593/tcp   open  ncacn_http    Microsoft Windows RPC over HTTP 1.0
+636/tcp   open  ssl/ldap      Microsoft Windows Active Directory LDAP (Domain: fluffy.htb, Site: Default-First-Site-Name)
+|_ssl-date: 2026-05-26T05:43:06+00:00; +7h00m00s from scanner time.
+| ssl-cert: Subject:
+| Subject Alternative Name: DNS:DC01.fluffy.htb, DNS:fluffy.htb, DNS:FLUFFY
+| Not valid before: 2026-04-30T16:09:59
+|_Not valid after:  2106-04-30T16:09:59
+3268/tcp  open  ldap          Microsoft Windows Active Directory LDAP (Domain: fluffy.htb, Site: Default-First-Site-Name)
+|_ssl-date: 2026-05-26T05:43:07+00:00; +7h00m01s from scanner time.
+| ssl-cert: Subject:
+| Subject Alternative Name: DNS:DC01.fluffy.htb, DNS:fluffy.htb, DNS:FLUFFY
+| Not valid before: 2026-04-30T16:09:59
+|_Not valid after:  2106-04-30T16:09:59
+3269/tcp  open  ssl/ldap      Microsoft Windows Active Directory LDAP (Domain: fluffy.htb, Site: Default-First-Site-Name)
+| ssl-cert: Subject:
+| Subject Alternative Name: DNS:DC01.fluffy.htb, DNS:fluffy.htb, DNS:FLUFFY
+| Not valid before: 2026-04-30T16:09:59
+|_Not valid after:  2106-04-30T16:09:59
+|_ssl-date: 2026-05-26T05:43:06+00:00; +7h00m00s from scanner time.
+5985/tcp  open  http          Microsoft HTTPAPI httpd 2.0 (SSDP/UPnP)
+|_http-server-header: Microsoft-HTTPAPI/2.0
+|_http-title: Not Found
+9389/tcp  open  mc-nmf        .NET Message Framing
+49667/tcp open  msrpc         Microsoft Windows RPC
+49689/tcp open  ncacn_http    Microsoft Windows RPC over HTTP 1.0
+49690/tcp open  msrpc         Microsoft Windows RPC
+49698/tcp open  msrpc         Microsoft Windows RPC
+49714/tcp open  msrpc         Microsoft Windows RPC
+49727/tcp open  msrpc         Microsoft Windows RPC
+Service Info: Host: DC01; OS: Windows; CPE: cpe:/o:microsoft:windows
+
+Host script results:
+| smb2-time:
+|   date: 2026-05-26T05:42:26
+|_  start_date: N/A
+| smb2-security-mode:
+|   3.1.1:
+|_    Message signing enabled and required
+|_clock-skew: mean: 7h00m00s, deviation: 0s, median: 6h59m59s
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+Nmap done: 1 IP address (1 host up) scanned in 96.53 seconds</pre>
+
+<ul>
+  <li>Ports open: 53, 80, 88, 135, 139, 443, 445, 464, 593, 636, 3268, 3269, 5985.</li>
+  <li>Domain: fluffy.htb</li>
+  <li>DC: DC01.fluffy.htb</li>
+</ul>
+<p>We see SMB (on port 445 ), LDAP (on port 389 ), and Kerberos (on port 88 ) are running. Hence, we can
+identify this as a Domain Controller. From the nmap scan results, we see that the domain name is
+fluffy.htb , and the Domain Controller's DNS name is DC01.fluffy.htb. So I added that to the
+/etc/hosts file.</p>
+<pre><code>$ echo "10.129.232.88 fluffy.htb dc01.fluffy.htb"|sudo tee -a /etc/hosts </code></pre>
+
+<p>Using the provided credentials j.fleischman:J0elTHEM4n1990! , I enumerated the SMB service to see available shares.</p>
+<pre><code>$ nxc smb 10.129.232.88 -u 'j.fleischman' -p 'J0elTHEM4n1990!' --shares</code>
+SMB         10.129.232.88   445    DC01             [*] Windows 10 / Server 2019 Build 17763 (name:DC01) (domain:fluffy.htb) (signing:True) (SMBv1:None) (Null Auth:True)
+SMB         10.129.232.88   445    DC01             [+] fluffy.htb\j.fleischman:J0elTHEM4n1990! 
+SMB         10.129.232.88   445    DC01             [*] Enumerated shares
+SMB         10.129.232.88   445    DC01             Share           Permissions     Remark
+SMB         10.129.232.88   445    DC01             -----           -----------     ------
+SMB         10.129.232.88   445    DC01             ADMIN$                          Remote Admin
+SMB         10.129.232.88   445    DC01             C$                              Default share
+SMB         10.129.232.88   445    DC01             IPC$            READ            Remote IPC
+SMB         10.129.232.88   445    DC01             IT              READ,WRITE      
+SMB         10.129.232.88   445    DC01             NETLOGON        READ            Logon server share 
+SMB         10.129.232.88   445    DC01             SYSVOL          READ            Logon server share
+</pre>
+        
+        
+
+        <h2 id="exploitation">Exploitation</h2>
+        <p>Add the vulnerability, reasoning, and exploitation steps here.</p>
+
+        <h2 id="privilege-escalation">Privilege Escalation</h2>
+        <p>Add the privilege escalation path here.</p>
+
+        <h2 id="notes">Notes</h2>
+        <p>Add useful notes, rabbit holes, screenshots, and reminders here.</p>
+
+        <h2 id="commands">Commands Used</h2>
+        <pre><code># Add Fluffy commands here</code></pre>
+
+        <h2 id="lessons">Lessons Learned</h2>
+        <p>Add your key takeaways here.</p>
+      </article>
+
+      <aside class="toc" aria-label="Table of contents">
+        <h3>Fluffy</h3>
+        <a href="../../index.html#writeups">Back to CTF Writeups</a>
+        <a href="#info">Machine / Target Info</a>
+        <a href="#summary">Summary</a>
+        <a href="#enumeration">Enumeration</a>
+        <a href="#exploitation">Exploitation</a>
+        <a href="#privilege-escalation">Privilege Escalation</a>
+        <a href="#lessons">Lessons Learned</a>
+      </aside>
+    </section>
+  </main>
+
+  <footer>
+    <span>© <span id="year"></span> Vikram Singh</span>
+    <span>clean reports / real attack paths / measurable risk</span>
+  </footer>
+
+  <script src="../../assets/js/writeup.js"></script>
+</body>
+</html>

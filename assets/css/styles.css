@@ -544,15 +544,15 @@ h1 {
 
 .writeup-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 270px;
-  gap: 24px;
+  grid-template-columns: minmax(0, 1fr) 160px;
+  gap: 5px;
   align-items: start;
 }
 
 .toc {
   position: sticky;
   top: 84px;
-  border: 1px solid rgba(255, 255, 255, 0.09);
+  border: px solid rgba(255, 255, 255, 0.09);
   background: rgba(22, 22, 23, 0.82);
   backdrop-filter: saturate(180%) blur(22px);
   -webkit-backdrop-filter: saturate(180%) blur(22px);
