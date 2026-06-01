@@ -4,12 +4,6 @@ const writeups = [
     difficulty: "Easy",
     logo: "writeups/fluffy/fluffy.png",
     href: "writeups/fluffy/htb-fluffy.html"
-  },
-  {
-    name: "HTB Trick",
-    difficulty: "Easy",
-    logo: "writeups/trick/trick.png",
-    href: "writeups/trick/htb-trick.html"
   }
 ];
 
